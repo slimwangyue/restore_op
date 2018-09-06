@@ -8,9 +8,12 @@ Explanation at http://bhrigu.me/blog/2017/01/17/huffman-coding-python-implementa
 """
 
 
+
 @total_ordering
+
 class HeapNode:
-    def __init__(self, char, freq):
+    def __init__(self, char, freq, merge_time):
+        self.merge_time = merge_time
         self.char = char
         self.freq = freq
         self.left = None
@@ -18,15 +21,29 @@ class HeapNode:
 
     # defining comparators less_than and equals
     def __lt__(self, other):
-        return self.freq < other.freq
+        if self.freq != other.freq:
+            return self.freq < other.freq
+        else:
+            if self.char != None and other.char != None:
+                return int(self.char) < int(other.char)
+            if self.char == None and other.char != None:
+                return False
+            if self.char != None and other.char == None:
+                return True
+            if self.char == None and other.char == None:
+                return self.merge_time < other.merge_time
+
+        # return self.freq < other.freq
 
     def __eq__(self, other):
-        if (other == None):
+        if other == None:
             return False
-        if (not isinstance(other, HeapNode)):
+        if not isinstance(other, HeapNode):
             return False
         return self.freq == other.freq
 
+
+merged_times = 0
 
 class HuffmanCoding:
     def __init__(self):
@@ -46,15 +63,16 @@ class HuffmanCoding:
 
     def make_heap(self, frequency):
         for key in frequency:
-            node = HeapNode(key, frequency[key])
+            node = HeapNode(key, frequency[key], 0)
             heapq.heappush(self.heap, node)
 
     def merge_nodes(self):
         while (len(self.heap) > 1):
             node1 = heapq.heappop(self.heap)
             node2 = heapq.heappop(self.heap)
-
-            merged = HeapNode(None, node1.freq + node2.freq)
+            global merged_times
+            merged = HeapNode(None, node1.freq + node2.freq, merged_times)
+            merged_times += 1
             merged.left = node1
             merged.right = node2
 

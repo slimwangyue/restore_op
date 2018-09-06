@@ -28,11 +28,12 @@ import numpy as np
 class tt_conv(object):
     """Implementation of the AlexNet."""
 
-    def __init__(self, x, num_classes):
+    def __init__(self, x, num_classes, phase):
 
         # Parse input arguments into class variables
         self.X = x
         self.NUM_CLASSES = num_classes
+        self.phase = phase
 
         # Call the create function to build the computational graph of AlexNet
         self.create()
@@ -41,13 +42,13 @@ class tt_conv(object):
         """Create the network graph."""
         # 1st Layer: Conv -> norm -> ReLu
         conv1 = conv(self.X, 3, 3, 64, 1, 1, padding='SAME', name='conv1')
-        norm1 = lrn(conv1, 2, 1e-04, 0.75, name='norm1')
+        norm1 = lrn(conv1, 2, 1e-04, 0.75, name='norm1', phase=self.phase)
         # Apply relu function
         relu1 = tf.nn.relu(norm1)
 
         # 2st Layer: Conv -> norm -> ReLu
         conv2 = conv(relu1, 3, 3, 64, 1, 1, padding='SAME', name='conv2')
-        norm2 = lrn(conv2, 2, 1e-04, 0.75, name='norm2')
+        norm2 = lrn(conv2, 2, 1e-04, 0.75, name='norm2', phase=self.phase)
         # Apply relu function
         relu2 = tf.nn.relu(norm2)
 
@@ -57,13 +58,13 @@ class tt_conv(object):
 
         # 3st Layer: Conv -> norm -> ReLu
         conv3 = conv(pool2, 3, 3, 128, 1, 1, padding='SAME', name='conv3')
-        norm3 = lrn(conv3, 2, 1e-04, 0.75, name='norm3')
+        norm3 = lrn(conv3, 2, 1e-04, 0.75, name='norm3', phase=self.phase)
         # Apply relu function
         relu3 = tf.nn.relu(norm3)
 
         # 4st Layer: Conv -> norm -> ReLu
         conv4 = conv(relu3, 3, 3, 128, 1, 1, padding='SAME', name='conv4')
-        norm4 = lrn(conv4, 2, 1e-04, 0.75, name='norm4')
+        norm4 = lrn(conv4, 2, 1e-04, 0.75, name='norm4', phase=self.phase)
         # Apply relu function
         relu4 = tf.nn.relu(norm4)
 
@@ -73,13 +74,13 @@ class tt_conv(object):
 
         # 5st Layer: Conv -> norm -> ReLu
         conv5 = conv(pool4, 3, 3, 128, 1, 1, padding='SAME', name='conv5')
-        norm5 = lrn(conv5, 2, 1e-04, 0.75, name='norm5')
+        norm5 = lrn(conv5, 2, 1e-04, 0.75, name='norm5', phase=self.phase)
         # Apply relu function
         relu5 = tf.nn.relu(norm5)
 
         # 6st Layer: Conv -> norm -> ReLu
         conv6 = conv(relu5, 3, 3, 128, 1, 1, padding='SAME', name='conv6')
-        norm6 = lrn(conv6, 2, 1e-04, 0.75, name='norm6')
+        norm6 = lrn(conv6, 2, 1e-04, 0.75, name='norm6', phase=self.phase)
         # Apply relu function
         relu6 = tf.nn.relu(norm6)
 
@@ -133,8 +134,12 @@ def fc(x, num_in, num_out, name):
     return act
 
 
-def lrn(x, radius, alpha, beta, name, bias=1.0):
+def lrn(x, radius, alpha, beta, name, bias=1.0, phase=True):
     """Create a local response normalization layer."""
-    return tf.nn.local_response_normalization(x, depth_radius=radius,
-                                              alpha=alpha, beta=beta,
-                                              bias=bias, name=name)
+    # return tf.nn.local_response_normalization(x, depth_radius=radius,
+    #                                           alpha=alpha, beta=beta,
+    #                                           bias=bias, name=name)
+    return tf.contrib.layers.batch_norm(x,
+                                        center=True, scale=True,
+                                        is_training=phase,
+                                        scope=name)

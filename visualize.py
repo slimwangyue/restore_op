@@ -60,3 +60,5 @@ if __name__ == "__main__":
       help="The location for the Tensorboard log to begin visualization from.")
   FLAGS, unparsed = parser.parse_known_args()
   app.run(main=main, argv=[sys.argv[0]] + unparsed)
+
+  print('y')

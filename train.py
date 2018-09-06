@@ -24,7 +24,7 @@ x_image = tf.reshape(x, [-1, 32, 32, 3], name='images')
 global_step = tf.Variable(initial_value=0, trainable=False, name='global_step')
 learning_rate = tf.placeholder(tf.float32, shape=[], name='learning_rate')
 
-model = tt_conv(x_image, 10)
+model = tt_conv(x_image, 10, phase=True)
 
 # define activation of last layer as score
 score = model.fc7
@@ -37,9 +37,9 @@ epoch_start = 0
 
 
 # PARAMS
-_BATCH_SIZE = 128
-_EPOCH = 1
-_LOAD_PATH = "./tensorboard/cifar-10-v1.0.0/"
+_BATCH_SIZE = 256
+_EPOCH = 200
+_LOAD_PATH = "./tensor/cifar-10-v1.0.0/"
 _SAVE_PATH = "./tensor/cifar-10-v1.0.0/"
 
 labels_all = {}
@@ -53,11 +53,18 @@ fc_biases = {}
 
 # LOSS AND OPTIMIZER
 loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=softmax, labels=y))
+
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate,
                                    beta1=0.9,
                                    beta2=0.999,
                                    epsilon=1e-08).minimize(loss, global_step=global_step)
 
+# optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate,).minimize(loss, global_step=global_step)
+
+# optimizer = tf.train.RMSPropOptimizer(learning_rate,
+#                                       decay=0.9,
+#                                       momentum=0.9,
+#                                       epsilon=1.0).minimize(loss, global_step=global_step)
 
 # PREDICTION AND ACCURACY CALCULATION
 correct_prediction = tf.equal(tf.argmax(softmax, axis=1), tf.argmax(y, axis=1))
@@ -67,7 +74,7 @@ accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 # SAVER
 merged = tf.summary.merge_all()
 saver = tf.train.Saver()
-with tf.device("/gpu:0"):
+with tf.device("/cpu:0"):
     sess = tf.Session()
     train_writer = tf.summary.FileWriter(_LOAD_PATH, sess.graph)
 
@@ -170,7 +177,7 @@ def compress(variables, sess, epoch, use_compression=True):
                 samples_num = n * c * h
                 feature_dim = h
 
-                k = int(0.005 * samples_num) + 1
+                k = int(0.01 * samples_num) + 1
                 # skip the first layer
                 # if v.name == 'InceptionV1/Conv2d_1a_7x7/weights:0':
                 #     k = n * c * w
@@ -203,6 +210,7 @@ def compress(variables, sess, epoch, use_compression=True):
 
 
 def train(epoch):
+    model.phase = True
     with tf.device('/gpu:0'):
         global epoch_start
         epoch_start = time()
@@ -216,7 +224,8 @@ def train(epoch):
             start_time = time()
             i_global, _, batch_loss, batch_acc = sess.run(
                 [global_step, optimizer, loss, accuracy],
-                feed_dict={x: batch_xs, y: batch_ys, learning_rate: 0.0005})
+                # feed_dict = {x: batch_xs, y: batch_ys, learning_rate: 0.0002})
+                feed_dict={x: batch_xs, y: batch_ys, learning_rate: lr(epoch)})
             duration = time() - start_time
 
             if s % 10 == 0:
@@ -235,31 +244,43 @@ def train(epoch):
 def test_and_save(_global_step, epoch=-1, test=False):
     global global_accuracy
     global epoch_start
+    model.phase = False
+    with tf.device("/GPU:0"):
+        # Compress the model
+        # if epoch >= 0:
+        #     compress(tf.trainable_variables(), sess, epoch)
 
-    # Compress the model
-    if epoch >= 0:
-        compress(tf.trainable_variables(), sess, epoch)
+        i = 0
+        predicted_class = np.zeros(shape=len(test_x), dtype=np.int)
+        while i < len(test_x):
+            j = min(i + _BATCH_SIZE, len(test_x))
+            batch_xs = test_x[i:j, :]
+            batch_ys = test_y[i:j, :]
+            predicted_class[i:j] = sess.run(
+                tf.argmax(softmax, axis=1),
+                feed_dict={x: batch_xs, y: batch_ys, learning_rate: 0.0001}
+            )
+            i = j
 
-    i = 0
-    predicted_class = np.zeros(shape=len(test_x), dtype=np.int)
-    while i < len(test_x):
-        j = min(i + _BATCH_SIZE, len(test_x))
-        batch_xs = test_x[i:j, :]
-        batch_ys = test_y[i:j, :]
-        predicted_class[i:j] = sess.run(
-            tf.argmax(softmax, axis=1),
-            feed_dict={x: batch_xs, y: batch_ys, learning_rate: lr(epoch)}
+        correct = (np.argmax(test_y, axis=1) == predicted_class)
+        acc = correct.mean()*100
+        correct_numbers = correct.sum()
+
+        hours, rem = divmod(time() - epoch_start, 3600)
+        minutes, seconds = divmod(rem, 60)
+        mes = "\nEpoch {} - accuracy: {:.2f}% ({}/{}) - time: {:0>2}:{:0>2}:{:05.2f}"
+        print(mes.format((epoch+1), acc, correct_numbers, len(test_x), int(hours), int(minutes), seconds))
+
+        output_graph_def = tf.graph_util.convert_variables_to_constants(
+            sess,  # The session is used to retrieve the weights
+            tf.get_default_graph().as_graph_def(),  # The graph_def is used to retrieve the nodes
+            ['Softmax']  # The output node names are used to select the usefull nodes
         )
-        i = j
 
-    correct = (np.argmax(test_y, axis=1) == predicted_class)
-    acc = correct.mean()*100
-    correct_numbers = correct.sum()
-
-    hours, rem = divmod(time() - epoch_start, 3600)
-    minutes, seconds = divmod(rem, 60)
-    mes = "\nEpoch {} - accuracy: {:.2f}% ({}/{}) - time: {:0>2}:{:0>2}:{:05.2f}"
-    print(mes.format((epoch+1), acc, correct_numbers, len(test_x), int(hours), int(minutes), seconds))
+        # Finally we serialize and dump the output graph to the filesystem
+        with tf.gfile.GFile('./saving_pb/frozen.pb', "wb") as f:
+            f.write(output_graph_def.SerializeToString())
+        print("%d ops in the final graph." % len(output_graph_def.node))
 
     if test:
         return
@@ -322,22 +343,22 @@ def find_fc(name, max_layer=100):
 
 
 _SAVE_PATH = "./tensorboard_restore/"
-# create model with default config ( == no skip_layer and 1000 units in the last layer)
-model = tt_conv_restore(x_image_new, 10, centers_all, index_all, shapes_all, freq_all, conv_biases, fc_weights, fc_biases)
 
-# define activation of last layer as score
-score = model.fc7
-
-# create op to calculate softmax
-softmax = tf.nn.softmax(score)
-
-
-# Initialize the variables (i.e. assign their default value)
-init = tf.global_variables_initializer()
-saver = tf.train.Saver()
 
 with tf.Session() as sess:
+    # create model with default config ( == no skip_layer and 1000 units in the last layer)
+    model = tt_conv_restore(x_image_new, 10, centers_all, index_all, shapes_all, freq_all, conv_biases, fc_weights,
+                            fc_biases)
 
+    # define activation of last layer as score
+    score = model.fc7
+
+    # create op to calculate softmax
+    softmax = tf.nn.softmax(score)
+
+    # Initialize the variables (i.e. assign their default value)
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
     # Run the initializer
     sess.run(init)
 
@@ -454,9 +475,16 @@ with tf.Session() as sess:
     correct_numbers = correct.sum()
     print(correct, acc, correct_numbers)
 
-    saver.save(sess, _SAVE_PATH)
+    # saver.save(sess, _SAVE_PATH)
 
-    oup_names = [None]
-    oup_names[0] = sess.graph.get_operations()[-1].name
-    constant_graph = graph_util.convert_variables_to_constants(sess, sess.graph.as_graph_def(), oup_names)
-    graph_io.write_graph(constant_graph, "./", "model_op.pb", as_text=False)
+    # We use a built-in TF helper to export variables to constants
+    output_graph_def = tf.graph_util.convert_variables_to_constants(
+        sess,  # The session is used to retrieve the weights
+        tf.get_default_graph().as_graph_def(),  # The graph_def is used to retrieve the nodes
+        ['Softmax']  # The output node names are used to select the usefull nodes
+    )
+
+    # Finally we serialize and dump the output graph to the filesystem
+    with tf.gfile.GFile('./frozen/frozen.pb', "wb") as f:
+        f.write(output_graph_def.SerializeToString())
+    print("%d ops in the final graph." % len(output_graph_def.node))
